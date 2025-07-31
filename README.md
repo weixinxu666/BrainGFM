@@ -1,2 +1,2 @@
 # BrainGFM
-Coming soon.
+Brain Graph Foundation Model
