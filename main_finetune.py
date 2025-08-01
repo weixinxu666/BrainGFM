@@ -24,11 +24,12 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, gpus))
 cudnn.benchmark = False
 cudnn.deterministic = True
 
+
 # ===============================
 # ======== 实验类定义 ============
 # ===============================
 class ExP:
-    def __init__(self, fold_idx):
+    def __init__(self, fold_idx, pretrained_path=None):
         super(ExP, self).__init__()
 
         self.batch_size = 64
@@ -36,12 +37,14 @@ class ExP:
         self.lr = 0.0002
         self.b1, self.b2 = 0.5, 0.999
         self.save_path = './exp_results/fmri/'
+        os.makedirs(self.save_path, exist_ok=True)
+
+        self.fold_idx = fold_idx
+
         self.Tensor = torch.cuda.FloatTensor
         self.LongTensor = torch.cuda.LongTensor
-
         self.criterion_cls = nn.CrossEntropyLoss().cuda()
 
-        # 模型参数
         encoder = BrainGFM(
             ff_hidden_size=256,
             num_classes=2,
@@ -61,9 +64,17 @@ class ExP:
             num_classes=2
         ).cuda()
 
+        # 加载预训练模型（如有）
+        if pretrained_path is not None and os.path.isfile(pretrained_path):
+            print(f">>> Loading pretrained model from: {pretrained_path}")
+            state_dict = torch.load(pretrained_path, map_location='cuda')
+            self.model_t.load_state_dict(state_dict, strict=False)
+        elif pretrained_path:
+            print(f">>> WARNING: Pretrained model not found at {pretrained_path}")
+
     def get_data(self, path):
         data = np.load(path, allow_pickle=True).item()
-        data_sub = data['abide2']
+        data_sub = data['adni2']
         return data_sub["conn"], data_sub["label"]
 
     def train(self, data_t):
@@ -132,6 +143,10 @@ class ExP:
                     y_pred = y_hat
                     print(">>> Model Updated (Best Score)")
 
+                    # 可选：保存最佳模型
+                    torch.save(self.model_t.state_dict(),
+                               os.path.join(self.save_path, f"best_model_fold{self.fold_idx}.pth"))
+
         return best_acc, best_auc, y_true, y_pred
 
 
@@ -140,8 +155,10 @@ class ExP:
 # ===============================
 def main():
     path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/gpt_fmri/data_maml/maml_all.npy'
-    exp = ExP(0)
-    total_data, total_label = exp.get_data(path)
+    pretrained_path = './checkpoints/pretrained_model.pth'  # 替换为你的预训练模型路径
+
+    exp0 = ExP(0)
+    total_data, total_label = exp0.get_data(path)
 
     idx_0 = np.where(total_label == 0)[0]
     idx_1 = np.where(total_label == 1)[0]
@@ -152,17 +169,14 @@ def main():
     print(f"Label 0 count: {len(idx_0)}")
     print(f"Label 1 count: {len(idx_1)}")
 
-    # ==== 交叉验证设置 ====
-    kf = KFold(n_splits=5, shuffle=True, random_state=88)
+    kf = KFold(n_splits=10, shuffle=True, random_state=88)
 
-    # ==== 初始化评估指标 ====
     all_true, all_pred = [], []
     metrics = {
         'acc': [], 'auc': [], 'f1': [], 'precision': [],
         'recall': [], 'sensitivity': [], 'specificity': []
     }
 
-    # ==== 交叉验证训练 ====
     for fold, (train_idx, test_idx) in enumerate(kf.split(total_data), 1):
         print(f"\n==== Fold {fold} ====")
         train_data = total_data[train_idx]
@@ -170,7 +184,7 @@ def main():
         train_label = total_label[train_idx]
         test_label = total_label[test_idx]
 
-        exp = ExP(fold)
+        exp = ExP(fold_idx=fold, pretrained_path=pretrained_path)
         best_acc, best_auc, y_true, y_pred = exp.train([train_data, test_data, train_label, test_label])
 
         y_true = y_true.cpu().numpy()
@@ -190,12 +204,10 @@ def main():
         all_true.extend(y_true)
         all_pred.extend(y_pred)
 
-    # ==== 打印平均指标 ====
     print("\n=== Cross-Validation Results ===")
     for k, v in metrics.items():
         print(f"Average {k}: {np.mean(v):.4f}")
 
-    # ==== 混淆矩阵绘图 ====
     cm = confusion_matrix(all_true, all_pred)
     cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
 
