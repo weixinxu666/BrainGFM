@@ -12,9 +12,9 @@ from BrainGFM import BrainGFM
 class ExP():
     def __init__(self, nsub, pretrain_mode="gmae+gcl"):
         super(ExP, self).__init__()
-        self.batch_size = 128
-        self.n_epochs = 50
-        self.lr = 0.0001
+        self.batch_size = 64
+        self.n_epochs = 20
+        self.lr = 0.00005
         self.b1 = 0.5
         self.b2 = 0.99
         self.nSub = nsub
@@ -47,7 +47,7 @@ class ExP():
             dropout=0.3,
             num_GNN_layers=4,
             nhead=8,
-            hidden_dim=128,
+            hidden_dim=256,
             max_feature_dim=self.max_feature_dim,
             rwse_steps=5,
             moe_num_experts=1
@@ -151,7 +151,7 @@ def main():
     path_t = '/home/xinxu/Lehigh/Codes/BICLab_data/atlas_group/test2'
 
     # 可选模式: "gmae", "gcl", "gmae+gcl", "gmae->gcl", "gcl->gmae"
-    pretrain_mode = "gmae+gcl"
+    pretrain_mode = "gmae->gcl"
 
     exp = ExP(nsub=1, pretrain_mode=pretrain_mode)
     atlas_all = os.listdir(path_t)

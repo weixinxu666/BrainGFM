@@ -43,7 +43,7 @@ class ExP:
 
         self.Tensor = torch.cuda.FloatTensor
         self.LongTensor = torch.cuda.LongTensor
-        self.criterion_cls = nn.CrossEntropyLoss().cuda()
+        self.criterion_cls = =nn.CrossEntropyLoss().cuda()
 
         encoder = BrainGFM(
         ff_hidden_size=256,
@@ -54,7 +54,7 @@ class ExP:
         nhead=8,
         hidden_dim=256,
         max_feature_dim=512,
-        rwse_steps=5,
+        rwse_steps=1,
         moe_num_experts=1
     ).cuda()
 
@@ -64,13 +64,13 @@ class ExP:
             num_classes=2
         ).cuda()
 
-        # 加载预训练模型（如有）
-        if pretrained_path is not None and os.path.isfile(pretrained_path):
-            print(f">>> Loading pretrained model from: {pretrained_path}")
-            state_dict = torch.load(pretrained_path, map_location='cuda')
-            self.model_t.load_state_dict(state_dict, strict=False)
-        elif pretrained_path:
-            print(f">>> WARNING: Pretrained model not found at {pretrained_path}")
+        # # 加载预训练模型（如有）
+        # if pretrained_path is not None and os.path.isfile(pretrained_path):
+        #     print(f">>> Loading pretrained model from: {pretrained_path}")
+        #     state_dict = torch.load(pretrained_path, map_location='cuda')
+        #     self.model_t.load_state_dict(state_dict, strict=False)
+        # elif pretrained_path:
+        #     print(f">>> WARNING: Pretrained model not found at {pretrained_path}")
 
     def get_data(self, path):
         data = np.load(path, allow_pickle=True).item()
@@ -155,19 +155,21 @@ class ExP:
 # ===============================
 def main():
     path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/gpt_fmri/data_maml/maml_all.npy'
-    # pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae+gcl/graphmae_gmae+gcl.pth'  # 替换为你的预训练模型路径
-    pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae->gcl/graphmae_gmae+gcl.pth'  # 替换为你的预训练模型路径
-    # pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae/graphmae_gmae.pth'  # 替换为你的预训练模型路径
-    # pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gcl/graphmae_gcl.pth'  # 替换为你的预训练模型路径
+    pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae+gcl/graphmae_gmae+gcl.pth'  # 替换为你的预训练模型路径
 
     exp0 = ExP(0)
     total_data, total_label = exp0.get_data(path)
 
+
     idx_0 = np.where(total_label == 0)[0]
     idx_1 = np.where(total_label == 1)[0]
 
-    selected_indices = np.concatenate([idx_0, idx_1])
 
+    selected_indices = np.concatenate([idx_0, idx_1])
+    # selected_indices = np.concatenate([idx_0_selected, idx_1])
+
+
+    # selected_indices = np.concatenate([idx_0, idx_1])
     total_data = total_data[selected_indices]
     total_label = total_label[selected_indices]
 

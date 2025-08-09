@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from BrainGFM import BrainGFM
+# from BrainGFM import BrainGFM
+from BrainGFM_Gprompt import BrainGFM
 
 # === NT-Xent Loss ===
 class NTXentLoss(nn.Module):
@@ -145,7 +146,7 @@ if __name__ == "__main__":
         dropout=0.3,
         num_GNN_layers=4,
         nhead=8,
-        hidden_dim=128,
+        hidden_dim=256,
         max_feature_dim=256,
         rwse_steps=5,
         moe_num_experts=1
