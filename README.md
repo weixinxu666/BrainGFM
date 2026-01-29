@@ -49,3 +49,9 @@ BrainGFM/
   year    = {2025}
 }
 ```
+
+
+## Contact
+
+For questions or collaborations, please contact:  
+[xiw523@lehigh.edu](mailto:xiw523@lehigh.edu)
