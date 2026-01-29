@@ -36,3 +36,16 @@ BrainGFM/
 ├── utils.py                     # Shared utils
 ├── main_pretrain.py             # Entry for pretraining
 └── main_finetune.py             # Entry for finetuning / downstream eval
+
+```
+
+## Citation
+
+```
+@article{wei2025braingfm,
+  title   = {A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning for Any Atlas and Disorder},
+  author  = {Wei, Xinxu and Zhao, Kanhao and Jiao, Yong and He, Lifang and Zhang, Yu},
+  journal = {arXiv preprint arXiv:2506.02044},
+  year    = {2025}
+}
+```
