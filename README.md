@@ -1,11 +1,12 @@
 # BrainGFM (ICLR 2026)
 
-Official repository of the paper  
+
 **A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning for Any Atlas and Disorder**
 
-[![Paper](https://openreview.net/forum?id=PeGHkAaRxs&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DICLR.cc%2F2026%2FConference%2FAuthors%23your-submissions))
+[![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/2506.02044)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](#license)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](#environment-setup)
+
 
 ---
 
