@@ -28,7 +28,8 @@ It unifies:
 
 ```text
 BrainGFM/
-├── assets/                     # Figures used in README
+├── assets/                      # Figures used in README
+├── checkpoint/                  # Pretrained Checkpoint
 ├── BrainGFM_pretrain.py         # Core pretraining model (GCL/GMAE)
 ├── BrainGFM_Gprompt.py          # BrainGFM with graph prompt module
 ├── graph_prompt.py              # Prompt implementation utilities
