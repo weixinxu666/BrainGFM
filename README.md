@@ -1,12 +1,38 @@
 # BrainGFM (ICLR 2026)
 
+<div align="center">
 
-**A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning for Any Atlas and Disorder**
+<h2>A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning for Any Atlas and Disorder</h2>
+
+<p>
+  Xinxu Wei</strong></a><sup>1</sup>, 
+  Kanhao Zhao<sup>1</sup>, 
+  Yong Jiao<sup>1</sup>, 
+  Lifang He<sup>1</sup>, 
+  Yu Zhang<sup>2</sup>
+</p>
+
+<p>
+  <sup>1</sup>Lehigh University, Bethlehem PA, USA &nbsp;&nbsp;&nbsp;
+  <sup>2</sup>Stanford University, Palo Alto CA, USA
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/lehigh_logo.png" width="220"/>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/stanford_logo.png" width="220"/>
+    </td>
+  </tr>
+</table>
 
 [![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/2506.02044)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](#license)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](#environment-setup)
 
+</div>
 
 ---
 
