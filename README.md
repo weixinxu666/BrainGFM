@@ -85,7 +85,7 @@ We provide a pretrained model checkpoint to facilitate reproducibility and furth
 The checkpoint contains the trained model parameters used in our experiments and can be directly loaded for evaluation, fine-tuning, or downstream tasks.
 
 **Download link:**  
-[Checkpoint Model](https://drive.google.com/file/d/1AymMhhKA_9lzcdRm-o9trUmLWc5SaQY6/view?usp=drive_link)
+[Checkpoint Model](https://drive.google.com/file/d/160qEtqGjIhXKJ0aVairUfIRJhkPOddLD/view?usp=drive_link)
 
 
 
