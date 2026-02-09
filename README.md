@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<h2>A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning for Any Atlas and Disorder</h2>
+<h2>A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning across Broad Atlases and Disorders</h2>
 
 <p>
   Xinxu Wei</strong></a><sup>1</sup>, 
@@ -63,6 +63,17 @@ BrainGFM/
 ├── utils.py                     # Shared utils
 ├── main_pretrain.py             # Entry for pretraining
 └── main_finetune.py             # Entry for finetuning / downstream eval
+
+```
+
+
+## Installation
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/weixinxu666/BrainGFM.git
+cd BrainGFM
 
 ```
 
