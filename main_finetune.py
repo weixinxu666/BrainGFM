@@ -32,9 +32,9 @@ class ExP:
     def __init__(self, fold_idx, pretrained_path=None):
         super(ExP, self).__init__()
 
-        self.batch_size = 64
-        self.n_epochs = 50
-        self.lr = 0.0002
+        self.batch_size = 16
+        self.n_epochs = 100
+        self.lr = 0.00005
         self.b1, self.b2 = 0.5, 0.999
         self.save_path = './exp_results/fmri/'
         os.makedirs(self.save_path, exist_ok=True)
