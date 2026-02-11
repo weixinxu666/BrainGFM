@@ -5,16 +5,18 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
-from BrainGFM_autoencoder import GraphMaskedAutoencoder
-from BrainGFM import BrainGFM
+# from BrainGFM_pretrain import GraphMaskedAutoencoder
+# from BrainGFM_pretrain_diffusion import GraphMaskedAutoencoder
+from BrainGFM_pretrain_remask import GraphMaskedAutoencoder
+from BrainGFM_Gprompt import BrainGFM
 
 
 class ExP():
     def __init__(self, nsub, pretrain_mode="gmae+gcl"):
         super(ExP, self).__init__()
         self.batch_size = 64
-        self.n_epochs = 20
-        self.lr = 0.00005
+        self.n_epochs = 10
+        self.lr = 0.00002
         self.b1 = 0.5
         self.b2 = 0.99
         self.nSub = nsub
@@ -26,7 +28,7 @@ class ExP():
         else:
             self.pretrain_mode = pretrain_mode.lower()
 
-        self.save_path = f'./exp_results/fmri/graph_mae_pretrain/{pretrain_mode}/'
+        self.save_path = f'./exp_results/fmri/final/{pretrain_mode}/'
         os.makedirs(self.save_path, exist_ok=True)
 
         self.max_feature_dim = 512
@@ -150,8 +152,8 @@ class ExP():
 def main():
     path_t = '/home/xinxu/Lehigh/Codes/BICLab_data/atlas_group/test2'
 
-    # 可选模式: "gmae", "gcl", "gmae+gcl", "gmae->gcl", "gcl->gmae"
-    pretrain_mode = "gmae->gcl"
+    # Mode: "gmae", "gcl", "gmae+gcl", "gmae->gcl", "gcl->gmae"
+    pretrain_mode = "gcl->gmae"
 
     exp = ExP(nsub=1, pretrain_mode=pretrain_mode)
     atlas_all = os.listdir(path_t)
