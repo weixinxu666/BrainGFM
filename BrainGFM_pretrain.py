@@ -28,7 +28,7 @@ class GraphMaskedAutoencoder(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.hidden_dim = hidden_dim
-        self.mask_ratio = 0.1
+        self.mask_ratio = 0.4
         self.pretrain_mode = pretrain_mode.lower()
         self.decoder_input_dim = encoder.hidden_dim
 
@@ -137,7 +137,7 @@ def safe_item(x):
 if __name__ == "__main__":
     B, N, feat_dim = 8, 77, 123
     x = torch.rand(B, N, feat_dim).cuda()
-    adj = (torch.rand(B, N, N) > 0.6).float().cuda()
+    adj = (torch.rand(B, N, N) > 0.3).float().cuda()
 
     encoder_base = lambda: BrainGFM(
         ff_hidden_size=256,
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     modes = ["gmae", "gcl", "gmae+gcl", "gmae->gcl", "gcl->gmae"]
 
     for mode in modes:
-        print(f"\n🌟 Training mode: {mode}")
+        print(f"\n Training mode: {mode}")
 
         if "->" in mode:
             first, second = mode.split("->")
