@@ -5,6 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+import time
+
 from torch.utils.data import DataLoader, TensorDataset
 from torch.autograd import Variable
 from torch.backends import cudnn
@@ -16,7 +18,7 @@ from sklearn.metrics import (
 
 from BrainGFM_Gprompt import BrainGFM, DiseaseGraphClassifier
 
-# 设置CUDA
+
 gpus = [0]
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, gpus))
@@ -24,10 +26,11 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, gpus))
 cudnn.benchmark = False
 cudnn.deterministic = True
 
+import warnings
+warnings.filterwarnings("ignore")
 
-# ===============================
-# ======== 实验类定义 ============
-# ===============================
+
+
 class ExP:
     def __init__(self, fold_idx, pretrained_path=None):
         super(ExP, self).__init__()
@@ -64,18 +67,21 @@ class ExP:
             num_classes=2
         ).cuda()
 
-        # 加载预训练模型（如有）
         if pretrained_path is not None and os.path.isfile(pretrained_path):
             print(f">>> Loading pretrained model from: {pretrained_path}")
             state_dict = torch.load(pretrained_path, map_location='cuda')
             self.model_t.load_state_dict(state_dict, strict=False)
         elif pretrained_path:
-            print(f">>> WARNING: Pretrained model not found at {pretrained_path}")
+            print(f">>> ************ WARNING: Pretrained model not found *****************")
 
     def get_data(self, path):
         data = np.load(path, allow_pickle=True).item()
-        data_sub = data['abide2']
+        # data_sub = data['adni2']
+        # data_sub = data['adhd200']
+        # data_sub = data['abide2']
+        data_sub = data['hbn_mdd']
         return data_sub["conn"], data_sub["label"]
+
 
     def train(self, data_t):
         train_data, test_data, train_label, test_label = data_t
@@ -85,8 +91,8 @@ class ExP:
         node_feat_train = torch.from_numpy(train_data)
         node_feat_test = torch.from_numpy(test_data)
 
-        adj_train = (node_feat_train > 0.6).int()
-        adj_test = (node_feat_test > 0.6).int()
+        adj_train = (node_feat_train > 0.3).int()
+        adj_test = (node_feat_test > 0.3).int()
 
         dataset = TensorDataset(node_feat_train, adj_train, train_label)
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
@@ -100,9 +106,13 @@ class ExP:
         best_acc = best_auc = best_score = 0
         y_true, y_pred = None, None
 
+        # batch_times = []  
+
         for epoch in range(self.n_epochs):
             self.model_t.train()
             for node_feat, adj, label in dataloader:
+                # start_time = time.time() 
+
                 node_feat = Variable(node_feat.cuda().type(self.Tensor))
                 adj = Variable(adj.cuda().type(self.Tensor))
                 label = Variable(label.cuda().type(self.LongTensor))
@@ -113,6 +123,8 @@ class ExP:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+
 
             self.model_t.eval()
             with torch.no_grad():
@@ -143,10 +155,7 @@ class ExP:
                     y_pred = y_hat
                     print(">>> Model Updated (Best Score)")
 
-                    # 可选：保存最佳模型
-                    # torch.save(self.model_t.state_dict(),
-                    #            os.path.join(self.save_path, f"best_model_fold{self.fold_idx}.pth"))
-
+        # print(f"\n=== Overall Batch Time: mean={np.mean(batch_times):.4f}s, std={np.std(batch_times):.4f}s ===")
         return best_acc, best_auc, y_true, y_pred
 
 
@@ -155,10 +164,9 @@ class ExP:
 # ===============================
 def main():
     path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/gpt_fmri/data_maml/maml_all.npy'
-    # pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae+gcl/graphmae_gmae+gcl.pth'  # 替换为你的预训练模型路径
-    pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae->gcl/graphmae_gmae+gcl.pth'  # 替换为你的预训练模型路径
-    # pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gmae/graphmae_gmae.pth'  # 替换为你的预训练模型路径
-    # pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/graph_mae_pretrain/gcl/graphmae_gcl.pth'  # 替换为你的预训练模型路径
+    pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/final/gcl->gmae/graphmae_gmae.pth'  
+
+
 
     exp0 = ExP(0)
     total_data, total_label = exp0.get_data(path)
@@ -174,7 +182,7 @@ def main():
     print(f"Label 0 count: {len(idx_0)}")
     print(f"Label 1 count: {len(idx_1)}")
 
-    kf = KFold(n_splits=5, shuffle=True, random_state=88)
+    kf = KFold(n_splits=10, shuffle=True, random_state=88)
 
     all_true, all_pred = [], []
     metrics = {
