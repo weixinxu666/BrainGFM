@@ -79,6 +79,71 @@ cd BrainGFM
 ```
 
 
+## 🚀 Execution Pipeline
+
+All scripts in this repository are executable independently.  
+However, we recommend following the pipeline below for standard usage and reproducibility.
+
+---
+
+### 1️⃣ Pretraining — Brain Foundation Model Learning
+
+Train **BrainGFM** using Graph Contrastive Learning (GCL) and Graph Masked Autoencoder (GMAE):
+
+```bash
+python main_pretrain.py
+```
+
+This step:
+
+- Performs self-supervised pretraining (GCL / GMAE)
+- Learns atlas- and disorder-general representations
+- Saves pretrained weights into the `checkpoint/` directory
+
+---
+
+### 2️⃣ Finetuning — Downstream Task Evaluation
+
+After pretraining, run downstream disease classification:
+
+```bash
+python main_finetune.py
+```
+
+This step:
+
+- Loads pretrained weights from `checkpoint/`
+- Performs supervised finetuning
+- Supports multi-atlas and multi-disorder settings
+- Reports classification performance metrics
+
+---
+
+### 3️⃣ Baseline — Training Without Pretraining
+
+To train BrainGFM **from scratch** (no pretraining):
+
+```bash
+python main_baseline.py
+```
+
+This is used for comparison with the pretrained model.
+
+---
+
+## 🔄 Recommended Order
+
+```text
+Step 1: main_pretrain.py
+Step 2: main_finetune.py
+Step 3: main_baseline.py (for comparison and ablation studies)
+```
+
+---
+
+This pipeline ensures consistent experimental settings and fair evaluation across pretrained and non-pretrained models.
+
+
 ## Pretrained Checkpoint
 
 We provide a pretrained model checkpoint to facilitate reproducibility and further research.
