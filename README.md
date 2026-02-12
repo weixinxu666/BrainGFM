@@ -159,11 +159,13 @@ The checkpoint contains the trained model parameters used in our experiments and
 ## Citation
 
 ```
-@article{wei2025braingfm,
-  title   = {A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning for Any Atlas and Disorder},
-  author  = {Wei, Xinxu and Zhao, Kanhao and Jiao, Yong and He, Lifang and Zhang, Yu},
-  journal = {arXiv preprint arXiv:2506.02044},
-  year    = {2025}
+@inproceedings{
+wei2026a,
+title={A Brain Graph Foundation Model: Pre-Training and Prompt-Tuning across Broad Atlases and Disorders},
+author={Xinxu Wei and kanhao zhao and Yong Jiao and Lifang He and Yu Zhang},
+booktitle={The Fourteenth International Conference on Learning Representations},
+year={2026},
+url={https://openreview.net/forum?id=PeGHkAaRxs}
 }
 ```
 
