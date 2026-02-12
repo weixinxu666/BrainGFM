@@ -28,7 +28,7 @@
   </tr>
 </table>
 
-[![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/2506.02044)
+[![OpenReview](https://img.shields.io/badge/ICLR%202026-OpenReview-blueviolet)](https://openreview.net/forum?id=PeGHkAaRxs)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey)](#license)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](#environment-setup)
 
