@@ -62,6 +62,7 @@ BrainGFM/
 ├── disease_names.py             # Disease name / mapping
 ├── utils.py                     # Shared utils
 ├── main_pretrain.py             # Entry for pretraining
+├── main_no_finetune.py          # Run baseline BrainGFM without pretrained model and finetuning
 └── main_finetune.py             # Entry for finetuning / downstream eval
 
 ```
