@@ -117,11 +117,6 @@ class ExP:
                 # end_time = time.time()
                 # batch_times.append(end_time - start_time)
 
-            # ======= 每个 epoch 打印平均 batch 时间 =======
-            # avg_time = np.mean(batch_times)
-            # std_time = np.std(batch_times)
-            # print(f"[Epoch {epoch}] Average Batch Time: {avg_time:.4f}s ± {std_time:.4f}s")
-
 
             self.model_t.eval()
             with torch.no_grad():
