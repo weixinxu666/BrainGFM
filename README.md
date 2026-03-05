@@ -68,6 +68,116 @@ BrainGFM/
 ```
 
 
+## 📦 Data Preparation
+
+BrainGFM expects the input brain graph dataset to be stored in a **NumPy `.npy` file**.
+
+Each sample corresponds to one subject and contains:
+
+- **node_feat**: brain connectivity matrix (e.g., Pearson correlation matrix)
+- **label**: classification label for the downstream task
+
+The adjacency matrix used in the model is **computed directly from the connectivity matrix**.
+
+---
+
+## Dataset Format
+
+The dataset should be stored as a **list of dictionaries** and saved as a single `.npy` file.
+
+Example structure:
+
+{
+    "node_feat": numpy.ndarray,   # shape: [N, N]
+    "label": int                  # class label
+}
+
+where
+
+- **N** = number of brain regions (nodes)
+- **node_feat** is typically the **functional connectivity matrix**
+
+---
+
+## Expected Dimensions
+
+For a dataset with **B subjects**, the stacked tensor will have shape:
+
+node_feat : [B, N, N]  
+label     : [B]
+
+where
+
+- **B** = number of subjects
+- **N** = number of brain regions in the atlas
+
+Example atlases:
+
+| Atlas | Number of Regions |
+|------|------|
+| Schaefer100 | 100 |
+| AAL116 | 116 |
+| Shen268 | 268 |
+
+---
+
+## Adjacency Matrix Construction
+
+The graph adjacency matrix is derived from the connectivity matrix via thresholding.
+
+Example used in this repository:
+
+adj = (node_feat > 0.3).int()
+
+Thus each brain graph consists of:
+
+node features : node_feat  [N × N]  
+adjacency     : adj        [N × N]
+
+---
+
+## Example: Creating the Dataset
+
+import numpy as np
+
+data_list = []
+
+for i in range(num_subjects):
+
+    sample = {
+        "node_feat": conn_matrix[i],   # shape [N, N]
+        "label": labels[i]
+    }
+
+    data_list.append(sample)
+
+np.save("dataset.npy", data_list)
+
+---
+
+## Example: Loading the Dataset
+
+data = np.load("dataset.npy", allow_pickle=True)
+
+node_feat = np.stack([d["node_feat"] for d in data])
+labels = np.array([d["label"] for d in data])
+
+Resulting tensors:
+
+node_feat : [B, N, N]  
+labels    : [B]
+
+---
+
+## Notes
+
+- BrainGFM supports **multiple brain atlases** and **multiple neurological disorders**.
+- The only requirement is that each subject provides an **N × N connectivity matrix**.
+- The adjacency matrix is automatically computed from the connectivity matrix during training.
+
+···
+
+
 ## Installation
 
 1. Clone the repository:
