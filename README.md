@@ -138,6 +138,7 @@ adjacency     : adj        [N × N]
 
 ## Example: Creating the Dataset
 
+```python
 import numpy as np
 
 data_list = []
@@ -152,20 +153,27 @@ for i in range(num_subjects):
     data_list.append(sample)
 
 np.save("dataset.npy", data_list)
+```
 
 ---
 
 ## Example: Loading the Dataset
 
+```python
+import numpy as np
+
 data = np.load("dataset.npy", allow_pickle=True)
 
 node_feat = np.stack([d["node_feat"] for d in data])
 labels = np.array([d["label"] for d in data])
+```
 
 Resulting tensors:
 
-node_feat : [B, N, N]  
+```
+node_feat : [B, N, N]
 labels    : [B]
+```
 
 ---
 
@@ -175,7 +183,7 @@ labels    : [B]
 - The only requirement is that each subject provides an **N × N connectivity matrix**.
 - The adjacency matrix is automatically computed from the connectivity matrix during training.
 
-···
+```
 
 
 ## Installation
