@@ -2,6 +2,7 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn import TransformerEncoder
 from disease_names import disease_names
 
@@ -63,6 +64,8 @@ class FastMoEFFN(nn.Module):
         Args:
             x: Tensor of shape [B, N, H]
         """
+        if self.num_experts == 1:
+            return self.experts[0](x)
         B, N, H = x.shape
         scores = self.router(x.mean(dim=1))  # [B, E]
         top1 = torch.argmax(scores, dim=-1)  # [B]
@@ -76,12 +79,13 @@ class FastMoEFFN(nn.Module):
 
 
 class GraphConvolution(nn.Module):
-    def __init__(self, in_features, out_features, act=torch.relu, bias=False):
+    def __init__(self, in_features, out_features, act=torch.relu, bias=False, layer_norm=False):
         super().__init__()
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
         self.bias = nn.Parameter(torch.FloatTensor(out_features)) if bias else None
-        self.act = act
-        self.bn = nn.BatchNorm1d(out_features)
+        self.layer_norm = layer_norm
+        self.act = F.gelu if layer_norm else act
+        self.bn = nn.LayerNorm(out_features) if layer_norm else nn.BatchNorm1d(out_features)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -103,17 +107,17 @@ class GraphConvolution(nn.Module):
         out = torch.bmm(adj, support)  # [B, N, Fout]
         if self.bias is not None:
             out = out + self.bias
-        out = self.bn(out.view(-1, out.shape[-1])).view(out.shape)
+        out = self.bn(out) if self.layer_norm else self.bn(out.view(-1, out.shape[-1])).view(out.shape)
         return self.act(out)
 
 
 class FastMoEGCN(nn.Module):
-    def __init__(self, hidden_dim, num_experts=4):
+    def __init__(self, hidden_dim, num_experts=4, layer_norm=False):
         super().__init__()
         self.num_experts = num_experts
         self.router = nn.Linear(hidden_dim, num_experts)
         self.experts = nn.ModuleList([
-            GraphConvolution(hidden_dim, hidden_dim)
+            GraphConvolution(hidden_dim, hidden_dim, layer_norm=layer_norm)
             for _ in range(num_experts)
         ])
 
@@ -123,6 +127,8 @@ class FastMoEGCN(nn.Module):
             x:   [B, N, H]
             adj: [B, N, N]
         """
+        if self.num_experts == 1:
+            return self.experts[0](x, adj)
         B, N, H = x.shape
         scores = self.router(x.mean(dim=1))  # [B, E]
         top1 = torch.argmax(scores, dim=-1)  # [B]
@@ -139,15 +145,22 @@ class FastMoEGCN(nn.Module):
 # UGFormer encoder layer
 # ===========================================
 class GTransformerEncoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1, num_experts=4):
+    def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1, num_experts=4, prenorm=False):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.ffn = FastMoEFFN(d_model, dim_feedforward, num_experts, dropout)
+        self.prenorm = prenorm
 
     def forward(self, src, src_mask=None, is_causal=None, src_key_padding_mask=None):
+        if self.prenorm:
+            h = self.norm1(src)
+            attn_out, _ = self.self_attn(h, h, h, key_padding_mask=src_key_padding_mask, attn_mask=src_mask, need_weights=False)
+            src = src + self.dropout(attn_out)
+            src = src + self.dropout(self.ffn(self.norm2(src)))
+            return src
         attn_out, _ = self.self_attn(src, src, src, key_padding_mask=src_key_padding_mask, attn_mask=src_mask)
         src = self.norm1(src + self.dropout(attn_out))
         ff_out = self.ffn(src)
@@ -160,12 +173,18 @@ class GTransformerEncoderLayer(nn.Module):
 # ===========================================
 class BrainGFM(nn.Module):
     def __init__(self, ff_hidden_size, num_classes, num_self_att_layers, dropout, num_GNN_layers, nhead,
-                 hidden_dim=128, max_feature_dim=256, rwse_steps=5, max_nodes=512, moe_num_experts=4):
+                 hidden_dim=128, max_feature_dim=256, rwse_steps=5, max_nodes=512, moe_num_experts=4,
+                 gcn_residual=False, gcn_norm=False, gcn_layer_norm=False, prenorm=False, attn_bias=False,
+                 readout="mean", rwse_fixed=False, token_init=1.0, n_clusters=10, node_id_emb=False):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.max_feature_dim = max_feature_dim
         self.rwse_steps = rwse_steps
         self.max_nodes = max_nodes
+        self.nhead = nhead
+        self.gcn_residual, self.gcn_norm, self.prenorm, self.attn_bias = gcn_residual, gcn_norm, prenorm, attn_bias
+        self.readout, self.rwse_fixed, self.node_id_emb = readout, rwse_fixed, node_id_emb
+        self.out_dim = {"meanmax_ln": 2 * hidden_dim, "ocread": n_clusters * hidden_dim}.get(readout, hidden_dim)
 
         # Project input features to hidden_dim
         self.projection_layer = nn.Linear(self.max_feature_dim, self.hidden_dim)
@@ -173,14 +192,8 @@ class BrainGFM(nn.Module):
 
         # Parcellation tokens (stored in original feature space; projected later)
         self.parcellation_tokens = nn.ParameterDict({
-            'schaefer':    nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'schaefer200': nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'schaefer300': nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'shen268':     nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'power264':    nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'gordon333':   nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'aal116':      nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
-            'aal3v1':      nn.Parameter(torch.randn(1, 1, self.max_feature_dim)),
+            name: nn.Parameter(torch.randn(1, 1, self.max_feature_dim) * token_init)
+            for name in ['schaefer', 'schaefer200', 'schaefer300', 'shen268', 'power264', 'gordon333', 'aal116', 'aal3v1']
         })
 
         # Disease tokens (registered as nn.Parameter)
@@ -206,7 +219,7 @@ class BrainGFM(nn.Module):
             TransformerEncoder(
                 GTransformerEncoderLayer(
                     d_model=hidden_dim, nhead=nhead,
-                    dim_feedforward=ff_hidden_size, dropout=dropout, num_experts=moe_num_experts
+                    dim_feedforward=ff_hidden_size, dropout=dropout, num_experts=moe_num_experts, prenorm=prenorm
                 ),
                 num_layers=num_self_att_layers
             )
@@ -214,7 +227,20 @@ class BrainGFM(nn.Module):
         ])
 
         # Stacked MoE-GCN blocks
-        self.lst_gnn = nn.ModuleList([FastMoEGCN(hidden_dim, moe_num_experts) for _ in range(num_GNN_layers)])
+        self.lst_gnn = nn.ModuleList([FastMoEGCN(hidden_dim, moe_num_experts, layer_norm=gcn_layer_norm) for _ in range(num_GNN_layers)])
+        if node_id_emb:
+            parc_sizes = {"schaefer": 100, "schaefer200": 200, "schaefer300": 300, "shen268": 268, "power264": 264,
+                          "gordon333": 333, "aal116": 116, "aal3v1": 166}
+            self.node_id_embs = nn.ParameterDict({k: nn.Parameter(torch.randn(1, n, hidden_dim) * token_init) for k, n in parc_sizes.items()})
+        if attn_bias:
+            self.attn_bias_adj = nn.Parameter(torch.zeros(nhead))
+            self.attn_bias_prompt = nn.Parameter(torch.zeros(nhead))
+        if readout == "meanmax_ln":
+            self.readout_ln = nn.LayerNorm(hidden_dim)
+        if readout == "ocread":
+            self.readout_ln = nn.LayerNorm(hidden_dim)
+            self.oc_centres = nn.Parameter(torch.empty(n_clusters, hidden_dim))
+            nn.init.orthogonal_(self.oc_centres)
         self.predictions = nn.ModuleList([nn.Linear(hidden_dim, num_classes) for _ in range(num_GNN_layers)])
         self.dropouts = nn.ModuleList([nn.Dropout(dropout) for _ in range(num_GNN_layers)])
 
@@ -242,15 +268,14 @@ class BrainGFM(nn.Module):
         new_adj[:, num_tokens:, num_tokens:] = adj
 
         # Weakly connect tokens to all nodes (value=1 by default; can be reduced to e.g. 0.5 if needed)
-        for i in range(num_tokens):
-            new_adj[:, i, :] = 1
-            new_adj[:, :, i] = 1
+        new_adj[:, :num_tokens, :] = 1
+        new_adj[:, :, :num_tokens] = 1
 
         # Remove self-loops (zero diagonal)
         new_adj = new_adj - torch.diag_embed(torch.diagonal(new_adj, dim1=1, dim2=2))
         return new_adj
 
-    def forward(self, node_features, Adj_block, parc_type, disease_type, valid_num_nodes=None):
+    def forward(self, node_features, Adj_block, parc_type, disease_type, valid_num_nodes=None, return_nodes=False):
         """
         Args:
             node_features:   [B, N, F]
@@ -258,19 +283,23 @@ class BrainGFM(nn.Module):
             parc_type:       str (must be a key in self.parcellation_tokens)
             disease_type:    str (lower-cased internally; fallback to 'none' if missing)
             valid_num_nodes: List[int] (number of valid nodes per sample; used for padding mask)
+            return_nodes:    if True also return the per-node states [B, N, H] used by the readout
+                             (needed for node-level pre-training objectives)
         """
         B, N, F = node_features.shape
         device = node_features.device
         if valid_num_nodes is None:
             valid_num_nodes = [N] * B
 
-        # 1) Append RWSE features
         rwse = self.compute_rwse(Adj_block, k=self.rwse_steps)                 # [B, N, k]
-        node_features = torch.cat([node_features, rwse], dim=-1)               # [B, N, F+k]
 
-        # 2) Zero-pad to max_feature_dim
         padded = torch.zeros((B, N, self.max_feature_dim), device=device)      # [B, N, Dm]
-        padded[:, :, :node_features.shape[-1]] = node_features
+        if self.rwse_fixed:
+            padded[:, :, :node_features.shape[-1]] = node_features
+            padded[:, :, self.max_feature_dim - self.rwse_steps:] = rwse
+        else:
+            node_features = torch.cat([node_features, rwse], dim=-1)
+            padded[:, :, :node_features.shape[-1]] = node_features
 
         # 3) Prepare tokens (projected)
         parc_token = self.projection_layer(self.parcellation_tokens[parc_type].expand(B, 1, -1))  # [B,1,H]
@@ -288,28 +317,53 @@ class BrainGFM(nn.Module):
             valid_num_nodes=valid_num_nodes
         )
 
-        # 5) Project to hidden_dim
         x_proj = self.projection_layer(x_prompted)                              # [B, N, H]
+        if self.node_id_emb:
+            x_proj = x_proj + self.node_id_embs[parc_type][:, :N, :]
 
         # 6) Concatenate tokens & expand adjacency
         x = torch.cat([disease_token, parc_token, x_proj], dim=1)              # [B, N+2, H]
         Adj_block_with_tokens = self.expand_adj_block(A_tilde, num_tokens=2)   # [B, N+2, N+2]
 
         # 7) Build padding mask
-        padding_mask = torch.ones(B, N + 2, device=device).bool()
-        for i, n_valid in enumerate(valid_num_nodes):
-            padding_mask[i, :n_valid + 2] = False
+        n_valid_t = torch.as_tensor(valid_num_nodes, device=device).view(B, 1) + 2
+        padding_mask = torch.arange(N + 2, device=device).view(1, -1) >= n_valid_t
 
-        # 8) Stacked UGFormer + FastMoEGCN
-        out = 0
+        node_mask = (~padding_mask[:, 2:]).unsqueeze(-1).float()
+        A_gcn = Adj_block_with_tokens[:, 2:, 2:]
+        if self.gcn_norm:
+            A_hat = A_gcn + torch.eye(N, device=device).unsqueeze(0)
+            dinv = A_hat.sum(-1).clamp(min=1e-6).rsqrt()
+            A_gcn = dinv.unsqueeze(-1) * A_hat * dinv.unsqueeze(1)
+        attn_mask = None
+        if self.attn_bias:
+            bias = torch.zeros(B, self.nhead, N + 2, N + 2, device=device)
+            bias[:, :, 2:, 2:] = (A_tilde.unsqueeze(1) * self.attn_bias_adj.view(1, -1, 1, 1)
+                                  + attn_bias_nodes.unsqueeze(1) * self.attn_bias_prompt.view(1, -1, 1, 1))
+            attn_mask = bias.reshape(B * self.nhead, N + 2, N + 2)
         for i in range(len(self.ugformer_layers)):
-            # If you need a batched attn_mask, pad attn_bias_nodes to [B, L, L] and pass via src_mask=
-            h = self.ugformer_layers[i](x, src_key_padding_mask=padding_mask)
-            node_h = h[:, 2:, :]
-            node_mask = (~padding_mask[:, 2:]).unsqueeze(-1).float()
-            node_h = self.lst_gnn[i](node_h, Adj_block_with_tokens[:, 2:, 2:])
-            g = (node_h * node_mask).sum(dim=1) / node_mask.sum(dim=1).clamp(min=1e-6)
-            out += self.predictions[i](self.dropouts[i](g))
+            for layer in self.ugformer_layers[i].layers:
+                x = layer(x, src_mask=attn_mask, src_key_padding_mask=padding_mask)
+            node_in = x[:, 2:, :]
+            node_h = self.lst_gnn[i](node_in, A_gcn) * node_mask
+            if self.gcn_residual:
+                node_h = node_in + node_h
+            x = torch.cat([x[:, :2, :], node_h], dim=1)
+        if self.readout == "ocread":
+            z = self.readout_ln(node_h)
+            P = torch.softmax(torch.einsum("bnh,kh->bnk", z, self.oc_centres) / math.sqrt(z.shape[-1]), dim=-1) * node_mask
+            pooled = torch.einsum("bnk,bnh->bkh", P, z) / (P.sum(1).unsqueeze(-1) + 1e-6)
+            g = pooled.flatten(1)
+        elif self.readout == "meanmax_ln":
+            z = self.readout_ln(node_h)
+            mean = (z * node_mask).sum(dim=1) / node_mask.sum(dim=1).clamp(min=1e-6)
+            mx = z.masked_fill(node_mask == 0, float("-inf")).max(dim=1).values
+            g = torch.cat([mean, mx], dim=-1)
+        else:
+            z = node_h
+            g = node_h.sum(dim=1) / node_mask.sum(dim=1).clamp(min=1e-6)
+        if return_nodes:
+            return g, z
         return g  # Return graph embedding (external classifier head is used outside)
 
 # ===========================================
@@ -319,7 +373,8 @@ class DiseaseGraphClassifier(nn.Module):
     def __init__(self, encoder: BrainGFM, hidden_dim=128, num_classes=2):
         super().__init__()
         self.encoder = encoder
-        self.classifier = nn.Linear(hidden_dim, num_classes)
+        in_dim = getattr(encoder, "out_dim", hidden_dim)
+        self.classifier = nn.Linear(in_dim, num_classes)
 
     def forward(self, x, adj, parc_type, disease_type, valid_num_nodes=None):
         g = self.encoder(x, adj, parc_type, disease_type, valid_num_nodes)

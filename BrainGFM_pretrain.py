@@ -1,195 +1,87 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-# from BrainGFM import BrainGFM
+import torch, torch.nn as nn, torch.nn.functional as F
 from BrainGFM_Gprompt import BrainGFM
 
-# === NT-Xent Loss ===
-class NTXentLoss(nn.Module):
-    def __init__(self, temperature=0.2):
+
+def build_encoder(node_id_emb=True):
+    return BrainGFM(ff_hidden_size=512, num_classes=2, num_self_att_layers=4, dropout=0.2, num_GNN_layers=4, nhead=8,
+                    hidden_dim=256, max_feature_dim=512, rwse_steps=5, moe_num_experts=1,
+                    gcn_residual=True, gcn_norm=True, gcn_layer_norm=True, prenorm=True, attn_bias=True,
+                    readout="meanmax_ln", rwse_fixed=True, token_init=0.02, node_id_emb=node_id_emb)
+
+
+class NTXent(nn.Module):
+    def __init__(self, t):
+        super().__init__(); self.t = t
+
+    def forward(self, a, b, group=None):
+        B = a.shape[0]; z = F.normalize(torch.cat([a, b]), dim=1); sim = z @ z.T / self.t
+        excl = torch.eye(2 * B, dtype=torch.bool, device=z.device)
+        if group is not None:
+            g2 = torch.cat([group, group]); diff = g2.unsqueeze(0) != g2.unsqueeze(1)
+            pos = torch.zeros_like(excl); ar = torch.arange(B, device=z.device); pos[ar, ar + B] = True; pos[ar + B, ar] = True
+            excl = excl | (diff & ~pos)
+        sim = sim.masked_fill(excl, -1e4)
+        target = torch.cat([torch.arange(B, 2 * B), torch.arange(0, B)]).to(z.device)
+        return F.cross_entropy(sim, target)
+
+
+class Pretrainer(nn.Module):
+    def __init__(self, encoder, max_feature_dim=512, dec_layers=2, dec_heads=4, dropout=0.1, temperature=0.2):
         super().__init__()
-        self.temperature = temperature
+        self.encoder = encoder; H = encoder.hidden_dim
+        self.mask_feat = nn.Parameter(torch.zeros(max_feature_dim))
+        self.dec_mask = nn.Parameter(torch.zeros(1, 1, H)); nn.init.normal_(self.dec_mask, std=0.02)
+        layer = nn.TransformerEncoderLayer(H, dec_heads, dim_feedforward=2 * H, dropout=dropout, batch_first=True, norm_first=True, activation="gelu")
+        self.decoder = nn.TransformerEncoder(layer, dec_layers, enable_nested_tensor=False)
+        self.dec_ln = nn.LayerNorm(H); self.proj_out = nn.Linear(H, max_feature_dim)
+        self.proj_cl = nn.Sequential(nn.Linear(encoder.out_dim, H), nn.GELU(), nn.Linear(H, 128))
+        self.adj_scale = nn.Parameter(torch.tensor(5.0)); self.adj_bias = nn.Parameter(torch.tensor(-2.0))
+        self.ntxent = NTXent(temperature)
 
-    def forward(self, z_i, z_j):
-        B = z_i.size(0)
-        z = torch.cat([z_i, z_j], dim=0)
-        z = F.normalize(z, dim=1)
-        sim = torch.matmul(z, z.T) / self.temperature
-        mask = torch.eye(2 * B, dtype=torch.bool).to(z.device)
-        sim.masked_fill_(mask, -9e15)
-        pos = torch.cat([torch.diag(sim, B), torch.diag(sim, -B)], dim=0)
-        nom = torch.exp(pos)
-        denom = torch.exp(sim).sum(dim=1)
-        return -torch.log(nom / denom).mean()
+    @staticmethod
+    def thr_adj(x, thr):
+        a = (x > thr).to(x.dtype); return (a + a.transpose(1, 2)) / 2
 
-# === Main Model ===
-class GraphMaskedAutoencoder(nn.Module):
-    def __init__(self, encoder: BrainGFM, hidden_dim=128, pretrain_mode="gmae+gcl"):
-        super().__init__()
-        self.encoder = encoder
-        self.hidden_dim = hidden_dim
-        self.mask_ratio = 0.4
-        self.pretrain_mode = pretrain_mode.lower()
-        self.decoder_input_dim = encoder.hidden_dim
+    @staticmethod
+    def light_aug(x, adj, p_edge=0.1, noise=0.02):
+        keep = (torch.rand_like(adj) > p_edge).to(adj.dtype); keep = torch.maximum(keep, keep.transpose(1, 2))
+        return x + noise * torch.randn_like(x), adj * keep
 
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, self.decoder_input_dim))
-        nn.init.xavier_uniform_(self.mask_token)
+    def mask_view(self, x, adj, ratio, mask_adj=True):
+        B, N, _ = x.shape
+        n_mask = max(1, int(round(N * ratio)))
+        ids = torch.rand(B, N, device=x.device).argsort(1)[:, :n_mask]
+        mask = torch.zeros(B, N, dtype=torch.bool, device=x.device).scatter_(1, ids, True)
+        keep = (~mask).to(x.dtype)
+        x_in = x * keep.unsqueeze(1)
+        x_in = torch.where(mask.unsqueeze(-1), self.mask_feat[:N].to(x.dtype).view(1, 1, N).expand(B, N, N), x_in)
+        adj_in = adj * keep.unsqueeze(1) * keep.unsqueeze(2) if mask_adj else adj
+        return x_in, adj_in, mask
 
-        self.decoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=self.decoder_input_dim, nhead=4, dropout=0.3),
-            num_layers=2
-        )
-        self.proj_out = nn.Linear(self.decoder_input_dim, hidden_dim)
+    def encode_masked(self, x, ratio, parc, mask_adj, thr, need_nodes=False):
+        adj = self.thr_adj(x, thr)
+        x_in, adj_in, mask = self.mask_view(x, adj, ratio, mask_adj)
+        out = self.encoder(x_in, adj_in, parc, "none", return_nodes=need_nodes)
+        return out, adj, mask
 
-        self.loss_fn = nn.SmoothL1Loss()
-        self.contrastive_loss = NTXentLoss(temperature=0.2)
+    def forward(self, xa, xb, parc, ratio, mask_adj=True, thr=0.3, group=None):
+        B, N, _ = xa.shape
+        (g1, z), adj_a, mask = self.encode_masked(xa, ratio, parc, mask_adj, thr, need_nodes=True)
+        z_dec = torch.where(mask.unsqueeze(-1), self.dec_mask.to(z.dtype).expand(B, N, -1), z)
+        pred = self.proj_out(self.dec_ln(self.decoder(z_dec)))[..., :N]
+        rec = F.smooth_l1_loss(pred[mask].float(), xa[mask].float())
+        zn = F.normalize(z.float(), dim=-1)
+        logits = torch.einsum("bnh,bmh->bnm", zn, zn) * self.adj_scale + self.adj_bias
+        rowmask = mask.unsqueeze(-1) | mask.unsqueeze(1)
+        adj_loss = F.binary_cross_entropy_with_logits(logits[rowmask], adj_a.float()[rowmask])
+        adj_b = self.thr_adj(xb, thr)
+        xb_in, adjb_in, _ = self.mask_view(xb, adj_b, ratio, mask_adj)
+        xb_in, adjb_in = self.light_aug(xb_in, adjb_in)
+        g2 = self.encoder(xb_in, adjb_in, parc, "none")
+        cl = self.ntxent(self.proj_cl(g1).float(), self.proj_cl(g2).float(), group)
+        return rec, adj_loss, cl, g1
 
-    def set_mode(self, mode):
-        self.pretrain_mode = mode.lower()
-
-    def random_mask(self, x, mask_ratio):
-        B, N, _ = x.size()
-        len_keep = max(4, int(N * (1 - mask_ratio)))
-        noise = torch.rand(B, N, device=x.device)
-        ids_shuffle = torch.argsort(noise, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-        ids_keep = ids_shuffle[:, :len_keep]
-        ids_mask = ids_shuffle[:, len_keep:]
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, x.size(-1)))
-        return x_masked, ids_keep, ids_mask, ids_restore
-
-    def view_augmentation(self, node_feat, adj, current_epoch=0):
-        node_feat_aug = node_feat.clone()
-        drop_ratio = min(0.2, 0.05 + 0.01 * current_epoch)
-        edge_drop_ratio = min(0.2, 0.05 + 0.01 * current_epoch)
-
-        drop_mask = (torch.rand_like(node_feat_aug[..., 0]) < drop_ratio).unsqueeze(-1)
-        noise = torch.randn_like(node_feat_aug) * 0.1
-        node_feat_aug[drop_mask.expand_as(node_feat_aug)] = noise[drop_mask.expand_as(node_feat_aug)]
-
-        rand_noise = torch.rand_like(adj)
-        edge_mask = ((rand_noise + rand_noise.transpose(1, 2)) / 2 > edge_drop_ratio).float()
-        adj_aug = adj * edge_mask
-
-        return node_feat_aug, adj_aug
-
-    def forward(self, node_feat, adj, parc_type, disease_type, current_epoch=0):
-        B, N, feat_dim = node_feat.shape
-        device = node_feat.device
-
-        self.mask_ratio = min(0.6, 0.1 + 0.05 * current_epoch)
-
-        node_feat_masked, ids_keep, ids_mask, ids_restore = self.random_mask(node_feat, self.mask_ratio)
-
-        adj_masked = torch.gather(adj, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, N))
-        adj_masked = torch.gather(adj_masked, dim=2, index=ids_keep.unsqueeze(1).expand(-1, ids_keep.shape[1], -1))
-
-        z_q = self.encoder(node_feat_masked, adj_masked, parc_type, disease_type)
-        if z_q.dim() == 2:
-            z_q = z_q.unsqueeze(1)
-
-        node_feat_view, adj_view = self.view_augmentation(node_feat, adj, current_epoch)
-        z_k = self.encoder(node_feat_view, adj_view, parc_type, disease_type)
-        if z_k.dim() == 2:
-            z_k = z_k.unsqueeze(1)
-
-        mask_len = N - z_q.shape[1]
-        mask_tokens = self.mask_token.expand(B, mask_len, z_q.shape[-1])
-        x_merged = torch.cat([z_q, mask_tokens], dim=1)
-        index_all = torch.cat([ids_keep, ids_mask], dim=1)
-        index_all_sorted = torch.argsort(index_all, dim=1)
-        x_restored = torch.gather(x_merged, dim=1, index=index_all_sorted.unsqueeze(-1).expand(-1, -1, z_q.shape[-1]))
-
-        x_trans = self.decoder(x_restored.permute(1, 0, 2)).permute(1, 0, 2)
-        pred_feat = self.proj_out(x_trans)
-
-        rec_loss, cl_loss, adj_loss = 0., 0., 0.
-
-        if self.pretrain_mode in ["gmae", "gmae+gcl"]:
-            rec_loss = sum(self.loss_fn(pred_feat[b, ids_mask[b]], node_feat[b, ids_mask[b]]) for b in range(B)) / B
-            if z_q.shape[1] > 1:
-                pred_adj_logits = torch.matmul(z_q, z_q.transpose(1, 2))
-                adj_target = torch.gather(adj, 1, ids_keep.unsqueeze(-1).expand(-1, -1, N))
-                adj_target = torch.gather(adj_target, 2, ids_keep.unsqueeze(1).expand(-1, ids_keep.shape[1], -1))
-                adj_loss = F.binary_cross_entropy_with_logits(pred_adj_logits, adj_target)
-
-        if self.pretrain_mode in ["gcl", "gmae+gcl"]:
-            z_q_flat = F.normalize(z_q, dim=-1).reshape(B * z_q.shape[1], -1)
-            z_k_flat = F.normalize(z_k, dim=-1).reshape(B * z_k.shape[1], -1)
-            cl_loss = self.contrastive_loss(z_q_flat, z_k_flat)
-
-        if self.pretrain_mode == "gmae":
-            total_loss = rec_loss + 0.1 * adj_loss
-        elif self.pretrain_mode == "gcl":
-            total_loss = 0.01 * cl_loss
-        else:
-            total_loss = rec_loss + 0.1 * adj_loss + 0.01 * cl_loss
-
-        return total_loss, rec_loss, 0.01 * cl_loss, pred_feat, node_feat
-
-
-# === MAIN ===
-import torch.optim as optim
-
-def safe_item(x):
-    return x.item() if isinstance(x, torch.Tensor) else float(x)
-
-if __name__ == "__main__":
-    B, N, feat_dim = 8, 77, 123
-    x = torch.rand(B, N, feat_dim).cuda()
-    adj = (torch.rand(B, N, N) > 0.3).float().cuda()
-
-    encoder_base = lambda: BrainGFM(
-        ff_hidden_size=256,
-        num_classes=2,
-        num_self_att_layers=4,
-        dropout=0.3,
-        num_GNN_layers=4,
-        nhead=8,
-        hidden_dim=256,
-        max_feature_dim=256,
-        rwse_steps=5,
-        moe_num_experts=1
-    ).cuda()
-
-    modes = ["gmae", "gcl", "gmae+gcl", "gmae->gcl", "gcl->gmae"]
-
-    for mode in modes:
-        print(f"\n Training mode: {mode}")
-
-        if "->" in mode:
-            first, second = mode.split("->")
-            first, second = first.strip(), second.strip()
-            encoder = encoder_base()
-            model = GraphMaskedAutoencoder(encoder, hidden_dim=feat_dim, pretrain_mode=first).cuda()
-            optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-
-            print(f"[Phase 1: {first}]")
-            for epoch in range(1, 11):
-                model.train()
-                optimizer.zero_grad()
-                total_loss, rec_loss, cl_loss, _, _ = model(x, adj, "schaefer", "MDD", current_epoch=epoch)
-                total_loss.backward()
-                optimizer.step()
-                print(f"[{mode}] Epoch {epoch:02d} | Total: {safe_item(total_loss):.4f} | Rec: {safe_item(rec_loss):.4f} | CL: {safe_item(cl_loss):.4f}")
-
-            model.set_mode(second)
-            print(f"[Phase 2: {second}]")
-            for epoch in range(11, 21):
-                model.train()
-                optimizer.zero_grad()
-                total_loss, rec_loss, cl_loss, _, _ = model(x, adj, "schaefer", "MDD", current_epoch=epoch)
-                total_loss.backward()
-                optimizer.step()
-                print(f"[{mode}] Epoch {epoch:02d} | Total: {safe_item(total_loss):.4f} | Rec: {safe_item(rec_loss):.4f} | CL: {safe_item(cl_loss):.4f}")
-        else:
-            encoder = encoder_base()
-            model = GraphMaskedAutoencoder(encoder, hidden_dim=feat_dim, pretrain_mode=mode).cuda()
-            optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-            for epoch in range(1, 21):
-                model.train()
-                optimizer.zero_grad()
-                total_loss, rec_loss, cl_loss, _, _ = model(x, adj, "schaefer", "MDD", current_epoch=epoch)
-                total_loss.backward()
-                optimizer.step()
-                print(f"[{mode}] Epoch {epoch:02d} | Total: {safe_item(total_loss):.4f} | Rec: {safe_item(rec_loss):.4f} | CL: {safe_item(cl_loss):.4f}")
+    def xatlas(self, g1_sub, xc, parc_c, thr, group=None):
+        adj_c = self.thr_adj(xc, thr); xc, adj_c = self.light_aug(xc, adj_c)
+        g3 = self.encoder(xc, adj_c, parc_c, "none")
+        return self.ntxent(self.proj_cl(g1_sub).float(), self.proj_cl(g3).float(), group)

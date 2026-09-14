@@ -264,12 +264,9 @@ This pipeline ensures consistent experimental settings and fair evaluation acros
 
 ## Pretrained Checkpoint
 
-We provide a pretrained model checkpoint to facilitate reproducibility and further research.
-
-The checkpoint contains the trained model parameters used in our experiments and can be directly loaded for evaluation, fine-tuning, or downstream tasks.
-
-**Download link:**  
-[Checkpoint Model](https://drive.google.com/file/d/1uWlfDqT37kc6jKQ21xwnKvy8NSqbf2B2/view?usp=drive_link)
+The pretrained encoder is included in this repository: `checkpoint/BrainGFM_pretrained.pth`.
+It is loaded automatically by `main_finetune.py`
+(`load_state_dict(..., strict=False)`; use the `none` disease token when fine-tuning it).
 
 
 

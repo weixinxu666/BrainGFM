@@ -36,9 +36,9 @@ class ExP:
         super(ExP, self).__init__()
 
         self.batch_size = 16
-        self.n_epochs = 100
-        self.lr = 0.00005
-        self.b1, self.b2 = 0.5, 0.999
+        self.n_epochs = 80
+        self.lr = 0.0002
+        self.b1, self.b2 = 0.9, 0.999
         self.save_path = './exp_results/fmri/'
         os.makedirs(self.save_path, exist_ok=True)
 
@@ -49,21 +49,30 @@ class ExP:
         self.criterion_cls = nn.CrossEntropyLoss().cuda()
 
         encoder = BrainGFM(
-        ff_hidden_size=256,
+        ff_hidden_size=512,
         num_classes=2,
         num_self_att_layers=4,
-        dropout=0.3,
+        dropout=0.2,
         num_GNN_layers=4,
         nhead=8,
         hidden_dim=256,
         max_feature_dim=512,
         rwse_steps=5,
-        moe_num_experts=1
+        moe_num_experts=1,
+        gcn_residual=True,
+        gcn_norm=True,
+        gcn_layer_norm=True,
+        prenorm=True,
+        attn_bias=True,
+        readout='meanmax_ln',
+        rwse_fixed=True,
+        token_init=0.02,
+        node_id_emb=True
     ).cuda()
 
         self.model_t = DiseaseGraphClassifier(
             encoder=encoder,
-            hidden_dim=256,
+            hidden_dim=encoder.out_dim,
             num_classes=2
         ).cuda()
 
@@ -97,7 +106,7 @@ class ExP:
         dataset = TensorDataset(node_feat_train, adj_train, train_label)
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
-        optimizer = torch.optim.Adam(self.model_t.parameters(), lr=self.lr, betas=(self.b1, self.b2))
+        optimizer = torch.optim.AdamW(self.model_t.parameters(), lr=self.lr, betas=(self.b1, self.b2), weight_decay=0.1)
 
         node_feat_test = Variable(node_feat_test.type(self.Tensor))
         adj_test = Variable(adj_test.type(self.Tensor))
@@ -117,7 +126,7 @@ class ExP:
                 adj = Variable(adj.cuda().type(self.Tensor))
                 label = Variable(label.cuda().type(self.LongTensor))
 
-                output = self.model_t(node_feat, adj, parc_type='schaefer', disease_type='MDD')
+                output = self.model_t(node_feat, adj, parc_type='schaefer', disease_type='none')
                 loss = self.criterion_cls(output, label)
 
                 optimizer.zero_grad()
@@ -128,7 +137,7 @@ class ExP:
 
             self.model_t.eval()
             with torch.no_grad():
-                cls = self.model_t(node_feat_test, adj_test, parc_type='schaefer', disease_type='MDD')
+                cls = self.model_t(node_feat_test, adj_test, parc_type='schaefer', disease_type='none')
                 loss_test = self.criterion_cls(cls, test_label)
                 y_hat = torch.max(cls, 1)[1]
 
@@ -164,7 +173,7 @@ class ExP:
 # ===============================
 def main():
     path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/gpt_fmri/data_maml/maml_all.npy'
-    pretrained_path = '/home/xinxu/Lehigh/Codes/lehigh_fmri/BrainGFM/exp_results/fmri/final/gcl->gmae/graphmae_gmae.pth'  
+    pretrained_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoint', 'BrainGFM_pretrained.pth')  
 
 
 
